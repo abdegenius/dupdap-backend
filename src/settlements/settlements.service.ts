@@ -120,9 +120,9 @@ export class SettlementsService {
 
     const settlement = this.settlementsRepo.create({
       merchantId: payment.merchantId,
-      totalAmountUsd: amountUsd.toNumber(),
-      feeAmountUsd: feeUsd.toNumber(),
-      netAmountUsd: netUsd.toNumber(),
+      totalAmountUsd: amountUsd.toFixed(6),
+      feeAmountUsd: feeUsd.toFixed(6),
+      netAmountUsd: netUsd.toFixed(6),
       fiatCurrency,
       status: netUsd.gte(LARGE_SETTLEMENT_THRESHOLD) ? SettlementStatus.PENDING_APPROVAL : SettlementStatus.PROCESSING,
       requiresApproval: netUsd.gte(LARGE_SETTLEMENT_THRESHOLD),
@@ -131,7 +131,7 @@ export class SettlementsService {
     const saved = await this.settlementsRepo.save(settlement);
 
     payment.status = PaymentStatus.SETTLING;
-    payment.feeUsd = feeUsd.toNumber();
+    payment.feeUsd = feeUsd.toFixed(6);
     payment.settlementId = saved.id;
     await this.paymentsRepo.save(payment);
 
@@ -153,7 +153,7 @@ export class SettlementsService {
         metadata: {
           merchantId: saved.merchantId,
           paymentId: payment.id,
-          amount: netUsd.toNumber(),
+          amount: netUsd.toFixed(6),
         },
         thresholdValue: 1,
       });
@@ -247,9 +247,9 @@ export class SettlementsService {
 
     const settlement = this.settlementsRepo.create({
       merchantId: payments[0].merchantId,
-      totalAmountUsd: totalAmountUsd.toNumber(),
-      feeAmountUsd: feeAmountUsd.toNumber(),
-      netAmountUsd: netAmountUsd.toNumber(),
+      totalAmountUsd: totalAmountUsd.toFixed(6),
+      feeAmountUsd: feeAmountUsd.toFixed(6),
+      netAmountUsd: netAmountUsd.toFixed(6),
       fiatCurrency,
       status: netAmountUsd.gte(10000) ? SettlementStatus.PENDING_APPROVAL : SettlementStatus.PROCESSING,
       requiresApproval: netAmountUsd.gte(10000),
@@ -259,7 +259,7 @@ export class SettlementsService {
 
     for (const payment of payments) {
       payment.status = PaymentStatus.SETTLING;
-      payment.feeUsd = this.toBig(payment.amountUsd).times(BATCH_FEE_RATE).toNumber();
+      payment.feeUsd = this.toBig(payment.amountUsd).times(BATCH_FEE_RATE).toFixed(6);
       payment.settlementId = saved.id;
     }
 
@@ -281,7 +281,7 @@ export class SettlementsService {
         metadata: {
           merchantId: saved.merchantId,
           paymentIds: payments.map((p) => p.id),
-          amount: netAmountUsd.toNumber(),
+          amount: netAmountUsd.toFixed(6),
         },
         thresholdValue: 1,
       });
