@@ -206,20 +206,14 @@ export class PaymentsService {
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       const amountXlm = new Big(item.amountUsd).div(xlmRate);
+
       const memo = this.stellar.generateMemo();
-
-      const stellarUri =
-        `web+stellar:pay?destination=${depositAddress}` +
-        `&amount=${amountXlm.toFixed(7)}&memo=${memo}&memo_type=text`;
-      const qrCode = await QRCode.toDataURL(stellarUri);
-
       const expiresAt = new Date();
       expiresAt.setMinutes(expiresAt.getMinutes() + (item.expiryMinutes ?? 30));
 
-      const payment = this.paymentsRepo.create({
+      const record = this.paymentsRepo.create({
         id: uuidv4(),
-        // Unique reference per item — suffix with batch index to avoid collisions
-        reference: `PAY-${now}-${Math.random().toString(36).substring(2, 6).toUpperCase()}-B${i}`,
+        reference: `PAY-${now}-${i}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
         merchantId,
         amountUsd: String(item.amountUsd),
         amountXlm: amountXlm.toFixed(7),
@@ -228,15 +222,14 @@ export class PaymentsService {
         metadata: item.metadata,
         stellarDepositAddress: depositAddress,
         stellarMemo: memo,
-        qrCode,
         expiresAt,
         status: PaymentStatus.PENDING,
       });
 
-      records.push(payment);
+      records.push(record);
       events.push({
         type: 'PaymentCreated',
-        paymentId: payment.id,
+        paymentId: record.id,
         merchantId,
         amountUsd: String(item.amountUsd),
         memo,
@@ -244,17 +237,14 @@ export class PaymentsService {
       });
     }
 
-    // ── Persist atomically — all records or none ──────────────────────────────
+    // ── Persist the whole batch in a single transaction ───────────────────────
     const saved = await this.dataSource.transaction(async (manager) => {
       return manager.save(Payment, records);
     });
 
-    // ── Emit PaymentCreated event for each entry (mirrors contract event log) ──
-    for (const event of events) {
-      this.logger.log(
-        `PaymentCreated ${event.paymentId} merchant=${event.merchantId} amountUsd=${event.amountUsd}`,
-      );
-    }
+    this.logger.log(
+      `Batch created ${saved.length} payments for merchant ${merchantId}`,
+    );
 
     return {
       payments: saved.map((p) => ({
@@ -262,17 +252,11 @@ export class PaymentsService {
         reference: p.reference,
         amountUsd: p.amountUsd,
         amountXlm: p.amountXlm,
-        qrCode: p.qrCode,
+        stellarDepositAddress: p.stellarDepositAddress,
+        stellarMemo: p.stellarMemo,
         expiresAt: p.expiresAt,
       })),
-      count: saved.length,
-      payments: saved.map((p) => ({
-        id: p.id,
-        reference: p.reference,
-        amountUsd: p.amountUsd,
-        amountXlm: p.amountXlm,
-        status: p.status,
-      })),
+      events,
     };
   }
 
@@ -288,15 +272,8 @@ export class PaymentsService {
       throw new BadRequestException('Only confirmed payments can be refunded');
     }
 
-    payment.status = PaymentStatus.REFUNDED;
-    payment.refundReason = dto.reason;
-    payment.refundedAt = new Date();
-    const saved = await this.paymentsRepo.save(payment);
-
-    this.analytics.clearCacheForMerchant(merchantId);
-
-    if (payment.status !== PaymentStatus.CONFIRMED) {
-      throw new BadRequestException('Only confirmed payments can be refunded');
+    if (!payment.customerWalletAddress) {
+      throw new BadRequestException('Payment has no customer wallet address');
     }
 
     const alreadyRefundedUsd = new Big(payment.refundAmountUsd ?? '0');
@@ -323,5 +300,32 @@ export class PaymentsService {
     this.analytics.clearCacheForMerchant(payment.merchantId);
 
     return saved2;
+  }
+
+  async findAll(
+    merchantId: string,
+    page = 1,
+    limit = 20,
+  ): Promise<PaginatedResponseDto<Payment>> {
+    const [items, total] = await this.paymentsRepo.findAndCount({
+      where: { merchantId },
+      order: { createdAt: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    return {
+      items,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  async findOne(id: string, merchantId: string): Promise<Payment> {
+    const payment = await this.paymentsRepo.findOne({ where: { id, merchantId } });
+    if (!payment) throw new NotFoundException('Payment not found');
+    return payment;
   }
 }
