@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { GroupsService } from './groups.service';
 import { GroupsRepository } from './groups.repository';
 import { StellarService } from '../stellar/stellar.service';
+import { StellarTxQueueService } from '../stellar/stellar-tx-queue.service';
 import { BlockchainWalletService } from '../blockchain-wallet/blockchain-wallet.service';
 import { Group } from './entities/group.entity';
 import { GroupMember, GroupMemberRole } from './entities/group-member.entity';
@@ -32,6 +33,7 @@ describe('GroupsService', () => {
   let service: GroupsService;
   let repo: jest.Mocked<GroupsRepository>;
   let stellar: jest.Mocked<StellarService>;
+  let stellarTxQueue: jest.Mocked<StellarTxQueueService>;
   let blockchainWallet: jest.Mocked<BlockchainWalletService>;
 
   beforeEach(async () => {
@@ -60,9 +62,17 @@ describe('GroupsService', () => {
           },
         },
         {
+          provide: StellarTxQueueService,
+          useValue: {
+            submitManageData: jest.fn(),
+          },
+        },
+        {
           provide: BlockchainWalletService,
           useValue: {
             getWallet: jest.fn(),
+          },
+        },
           },
         },
       ],
@@ -71,6 +81,7 @@ describe('GroupsService', () => {
     service = module.get(GroupsService);
     repo = module.get(GroupsRepository);
     stellar = module.get(StellarService);
+    stellarTxQueue = module.get(StellarTxQueueService);
     blockchainWallet = module.get(BlockchainWalletService);
   });
 
@@ -79,7 +90,7 @@ describe('GroupsService', () => {
   describe('createGroup', () => {
     it('creates group and adds creator as owner', async () => {
       const group = mockGroup();
-      jest.spyOn(service as any, 'syncOnChain').mockResolvedValue('tx-hash');
+      stellarTxQueue.submitManageData.mockResolvedValue('tx-hash');
       repo.create.mockReturnValue(group);
       repo.save.mockResolvedValue(group);
       repo.addMember.mockResolvedValue({} as GroupMember);
@@ -87,13 +98,17 @@ describe('GroupsService', () => {
 
       const result = await service.createGroup({ name: 'Test Group' }, 'user-1');
 
+      expect(stellarTxQueue.submitManageData).toHaveBeenCalledWith(
+        'group:user-1',
+        'Test Group',
+      );
       expect(repo.save).toHaveBeenCalled();
       expect(repo.addMember).toHaveBeenCalledWith(group.id, 'user-1', GroupMemberRole.OWNER);
       expect(result.name).toBe('Test Group');
     });
 
     it('throws if on-chain sync fails', async () => {
-      jest.spyOn(service as any, 'syncOnChain').mockRejectedValue(new Error('network error'));
+      stellarTxQueue.submitManageData.mockRejectedValue(new Error('network error'));
       await expect(service.createGroup({ name: 'X' }, 'user-1')).rejects.toThrow(BadRequestException);
     });
   });
